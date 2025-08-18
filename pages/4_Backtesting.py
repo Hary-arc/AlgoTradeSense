@@ -120,25 +120,28 @@ def main():
             # Backtest parameters summary
             st.subheader("📋 Backtest Summary")
             
-            summary_data = {
-                'Parameter': [
-                    'Model', 'Symbol', 'Period', 'Initial Capital',
-                    'Position Size', 'Commission', 'Stop Loss', 'Take Profit'
-                ],
-                'Value': [
-                    selected_model,
-                    model_info['symbol'],
-                    f"{start_date} to {end_date}",
-                    f"${initial_capital:,}",
-                    f"{position_size}%",
-                    f"{commission}%",
-                    f"{stop_loss}%",
-                    f"{take_profit}%"
-                ]
-            }
+            if models and model_info:
+                summary_data = {
+                    'Parameter': [
+                        'Model', 'Symbol', 'Period', 'Initial Capital',
+                        'Position Size', 'Commission', 'Stop Loss', 'Take Profit'
+                    ],
+                    'Value': [
+                        selected_model,
+                        model_info.get('symbol', 'N/A'),
+                        f"{start_date} to {end_date}",
+                        f"${initial_capital:,}",
+                        f"{position_size}%",
+                        f"{commission}%",
+                        f"{stop_loss}%",
+                        f"{take_profit}%"
+                    ]
+                }
             
-            summary_df = pd.DataFrame(summary_data)
-            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                summary_df = pd.DataFrame(summary_data)
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+            else:
+                st.error("No model selected for backtesting")
             
             # Run backtest button
             if st.button("🔄 Run Backtest", type="primary"):
@@ -163,8 +166,8 @@ def main():
                     status_text.text("Fetching historical data...")
                     progress_bar.progress(10)
                     
-                    symbol = model_info['symbol']
-                    interval = model_info['interval']
+                    symbol = model_info.get('symbol', 'BTCUSDT')
+                    interval = model_info.get('interval', '1h')
                     
                     # Calculate data points needed
                     interval_minutes = {
@@ -180,14 +183,21 @@ def main():
                         st.error("Could not fetch historical data")
                         return
                     
-                    df = pd.DataFrame(klines, columns=[
-                        'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                        'close_time', 'quote_asset_volume', 'number_of_trades',
-                        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-                    ])
+                    # Convert klines to DataFrame
+                    df_data = []
+                    for kline in klines:
+                        df_data.append({
+                            'timestamp': kline[0],
+                            'open': float(kline[1]),
+                            'high': float(kline[2]),
+                            'low': float(kline[3]),
+                            'close': float(kline[4]),
+                            'volume': float(kline[5])
+                        })
                     
-                    for col in ['open', 'high', 'low', 'close', 'volume']:
-                        df[col] = pd.to_numeric(df[col])
+                    df = pd.DataFrame(df_data)
+                    
+                    # Data is already numeric from above conversion
                     
                     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                     df.set_index('timestamp', inplace=True)
@@ -215,11 +225,15 @@ def main():
                     }
                     
                     # Run backtest
-                    results = backtest_engine.run_backtest(
-                        model_name=selected_model,
-                        data=df,
-                        config=backtest_config
-                    )
+                    if models and model_info and selected_model:
+                        results = backtest_engine.run_backtest(
+                            model_name=selected_model,
+                            data=df,
+                            config=backtest_config
+                        )
+                    else:
+                        st.error("Missing model information for backtesting")
+                        return
                     
                     progress_bar.progress(80)
                     status_text.text("Analyzing results...")
@@ -292,9 +306,10 @@ def main():
                         # Add buy/sell markers
                         for trade in results['trades']:
                             color = 'green' if trade['type'] == 'BUY' else 'red'
+                            portfolio_value_at_trade = trade.get('portfolio_value_before', initial_capital)
                             fig.add_trace(go.Scatter(
                                 x=[trade['timestamp']],
-                                y=[trade['price'] * initial_capital / df['close'].iloc[0]],  # Approximate portfolio value
+                                y=[portfolio_value_at_trade],
                                 mode='markers',
                                 marker=dict(
                                     color=color,
@@ -319,8 +334,11 @@ def main():
                 
                 except Exception as e:
                     st.error(f"Backtest failed: {str(e)}")
-                    progress_bar.progress(0)
-                    status_text.text("Backtest failed")
+                    if 'progress_bar' in locals():
+                        progress_bar.progress(0)
+                    if 'status_text' in locals():
+                        status_text.text("Backtest failed")
+                    st.exception(e)
         
         with col2:
             st.subheader("📊 Expected Performance")
