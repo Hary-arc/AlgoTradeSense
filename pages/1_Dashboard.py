@@ -28,19 +28,19 @@ def get_binance_client():
         st.error(f"Failed to initialize Binance client: {str(e)}")
         return None
 
-def create_tradingview_chart(df, symbol, patterns=None):
-    """Create professional TradingView-style candlestick chart with pattern overlays."""
+def create_tradingview_chart(df, symbol, patterns=None, current_price=None, price_change_pct=None):
+    """Create professional TradingView-style candlestick chart matching the reference design."""
     
-    # Create subplot with secondary y-axis for volume
+    # Create subplot with volume at bottom (matching TradingView layout)
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.05,
-        subplot_titles=(f'{symbol} Price Action', 'Volume'),
-        row_heights=[0.7, 0.3]
+        vertical_spacing=0.02,
+        row_heights=[0.75, 0.25],
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
     )
     
-    # Add candlestick chart
+    # Add candlestick chart with TradingView colors
     fig.add_trace(
         go.Candlestick(
             x=df.index,
@@ -48,26 +48,35 @@ def create_tradingview_chart(df, symbol, patterns=None):
             high=df['high'],
             low=df['low'],
             close=df['close'],
-            name='Price',
-            increasing_line_color='#26a69a',
-            decreasing_line_color='#ef5350',
-            increasing_fillcolor='rgba(38, 166, 154, 0.5)',
-            decreasing_fillcolor='rgba(239, 83, 80, 0.5)'
+            name=symbol,
+            increasing_line_color='#089981',  # TradingView green
+            decreasing_line_color='#F23645',  # TradingView red
+            increasing_fillcolor='#089981',
+            decreasing_fillcolor='#F23645',
+            line=dict(width=1)
         ),
         row=1, col=1
     )
     
-    # Add volume bars
-    colors = ['#26a69a' if close >= open else '#ef5350' 
-              for close, open in zip(df['close'], df['open'])]
+    # Add volume bars with TradingView styling
+    volume_colors = []
+    for i in range(len(df)):
+        if i == 0:
+            # First candle - use close vs open
+            color = '#089981' if df['close'].iloc[i] >= df['open'].iloc[i] else '#F23645'
+        else:
+            # Compare close to previous close (TradingView style)
+            color = '#089981' if df['close'].iloc[i] >= df['close'].iloc[i-1] else '#F23645'
+        volume_colors.append(color)
     
     fig.add_trace(
         go.Bar(
             x=df.index,
             y=df['volume'],
-            marker_color=colors,
+            marker_color=volume_colors,
             name='Volume',
-            opacity=0.7
+            opacity=0.6,
+            showlegend=False
         ),
         row=2, col=1
     )
@@ -171,45 +180,61 @@ def create_tradingview_chart(df, symbol, patterns=None):
                         row=1, col=1
                     )
     
-    # Update layout for professional appearance
+    # Update layout to match TradingView exactly
     fig.update_layout(
-        title=dict(
-            text=f"{symbol} Live Chart with Pattern Recognition",
-            x=0.5,
-            font=dict(size=20, family="Arial Black")
-        ),
         template='plotly_dark',
+        paper_bgcolor='#131722',  # TradingView background
+        plot_bgcolor='#131722',
+        font=dict(color='#D1D4DC', family='Arial', size=12),
         xaxis_rangeslider_visible=False,
-        height=800,
-        showlegend=True,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
-        margin=dict(l=50, r=50, t=80, b=50)
+        height=600,
+        showlegend=False,
+        margin=dict(l=0, r=0, t=0, b=0),
+        hovermode='x unified'
     )
     
-    # Update axes
+    # Update axes to match TradingView
     fig.update_xaxes(
-        title_text="Time",
         showgrid=True,
-        gridcolor='rgba(128, 128, 128, 0.2)',
+        gridwidth=1,
+        gridcolor='rgba(54, 58, 79, 0.5)',
+        showline=True,
+        linewidth=1,
+        linecolor='rgba(54, 58, 79, 0.8)',
+        tickfont=dict(color='#868B93', size=10),
+        showticklabels=True,
         row=2, col=1
     )
+    
     fig.update_yaxes(
-        title_text="Price (USDT)",
         showgrid=True,
-        gridcolor='rgba(128, 128, 128, 0.2)',
+        gridwidth=1,
+        gridcolor='rgba(54, 58, 79, 0.5)',
+        showline=False,
+        tickfont=dict(color='#868B93', size=10),
+        side='right',
+        showticklabels=True,
         row=1, col=1
     )
+    
     fig.update_yaxes(
-        title_text="Volume",
         showgrid=True,
-        gridcolor='rgba(128, 128, 128, 0.2)',
+        gridwidth=1,
+        gridcolor='rgba(54, 58, 79, 0.5)',
+        showline=False,
+        tickfont=dict(color='#868B93', size=10),
+        side='right',
+        showticklabels=True,
         row=2, col=1
+    )
+    
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(54, 58, 79, 0.5)',
+        showline=False,
+        showticklabels=False,
+        row=1, col=1
     )
     
     return fig
@@ -237,10 +262,13 @@ def main():
         )
     
     with col2:
+        # Note: Binance doesn't support sub-minute intervals like 5s, 10s
+        # Available intervals: 1s, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M
         interval = st.selectbox(
             "Timeframe",
-            ["1m", "5m", "15m", "1h", "4h", "1d"],
-            index=3
+            ["1s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"],
+            index=6,  # Default to 1h
+            help="Note: Ultra-short intervals (1s) may have limited historical data"
         )
     
     with col3:
@@ -277,33 +305,63 @@ def main():
         patterns = pattern_recognizer.detect_all_patterns(df)
         trading_signals = pattern_recognizer.get_trading_signals(patterns)
         
-        # Display current market info
+        # Calculate market metrics
         current_price = float(df['close'].iloc[-1])
         price_change = float(df['close'].iloc[-1]) - float(df['close'].iloc[-2])
         price_change_pct = (price_change / float(df['close'].iloc[-2])) * 100
+        high_24h = float(df['high'].max())
+        low_24h = float(df['low'].min())
+        volume = float(df['volume'].iloc[-1])
         
-        col1, col2, col3, col4, col5 = st.columns(5)
+        # Create TradingView-style metrics bar
+        st.markdown(f"""
+        <div style='background-color: #131722; padding: 12px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #363A4E;'>
+            <div style='display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;'>
+                <div style='display: flex; align-items: center; gap: 15px;'>
+                    <span style='color: #868B93; font-size: 12px;'>O</span>
+                    <span style='color: #D1D4DC; font-size: 12px; font-weight: 500;'>{df["open"].iloc[-1]:.4f}</span>
+                    <span style='color: #868B93; font-size: 12px;'>H</span>
+                    <span style='color: #089981; font-size: 12px; font-weight: 500;'>{high_24h:.4f}</span>
+                    <span style='color: #868B93; font-size: 12px;'>L</span>
+                    <span style='color: #F23645; font-size: 12px; font-weight: 500;'>{low_24h:.4f}</span>
+                    <span style='color: #868B93; font-size: 12px;'>C</span>
+                    <span style='color: #D1D4DC; font-size: 12px; font-weight: 500;'>{current_price:.4f}</span>
+                    <span style='color: #868B93; font-size: 12px;'>Volume</span>
+                    <span style='color: #D1D4DC; font-size: 12px; font-weight: 500;'>{volume:,.0f}</span>
+                </div>
+                <div style='display: flex; align-items: center; gap: 10px;'>
+                    <span style='color: #868B93; font-size: 12px;'>Patterns</span>
+                    <span style='color: #2962FF; font-size: 12px; font-weight: 500;'>{len([p for p in patterns.keys() if p != "support_resistance"])}</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        with col1:
-            st.metric("Current Price", f"${current_price:,.2f}", f"{price_change:+.2f} ({price_change_pct:+.1f}%)")
-        
-        with col2:
-            st.metric("24h High", f"${df['high'].max():,.2f}")
-        
-        with col3:
-            st.metric("24h Low", f"${df['low'].min():,.2f}")
-        
-        with col4:
-            st.metric("Volume", f"{df['volume'].iloc[-1]:,.0f}")
-        
-        with col5:
-            st.metric("Patterns Found", len([p for p in patterns.keys() if p != 'support_resistance']))
-        
-        st.markdown("---")
+        # Create TradingView-style header
+        st.markdown(f"""
+        <div style='background-color: #131722; padding: 16px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #363A4E;'>
+            <div style='display: flex; align-items: center; justify-content: space-between;'>
+                <div style='display: flex; align-items: center; gap: 15px;'>
+                    <h2 style='color: #D1D4DC; margin: 0; font-size: 22px; font-weight: 600;'>{symbol}</h2>
+                    <span style='background-color: #363A4E; color: #868B93; font-size: 11px; padding: 3px 6px; border-radius: 3px;'>BINANCE</span>
+                    <span style='color: {"#089981" if price_change_pct >= 0 else "#F23645"}; font-size: 24px; font-weight: 600; font-family: monospace;'>
+                        {current_price:.4f}
+                    </span>
+                    <span style='color: {"#089981" if price_change_pct >= 0 else "#F23645"}; font-size: 14px; font-weight: 500;'>
+                        {"+" if price_change >= 0 else ""}{price_change:.4f} ({price_change_pct:+.2f}%)
+                    </span>
+                </div>
+                <div style='display: flex; align-items: center; gap: 15px;'>
+                    <span style='background-color: #2962FF; color: white; font-size: 11px; padding: 2px 8px; border-radius: 12px; font-weight: 500;'>{interval}</span>
+                    <span style='color: #089981; font-size: 12px; font-weight: 500;'>● LIVE</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Create and display chart
-        chart_fig = create_tradingview_chart(df, symbol, patterns)
-        st.plotly_chart(chart_fig, use_container_width=True)
+        chart_fig = create_tradingview_chart(df, symbol, patterns, current_price, price_change_pct)
+        st.plotly_chart(chart_fig, use_container_width=True, config={'displayModeBar': False})
         
         # Display pattern analysis
         if patterns:
