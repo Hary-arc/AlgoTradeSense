@@ -97,7 +97,8 @@ class DataProcessor:
             
             # Volume indicators (if volume data is available)
             if 'volume' in df_processed.columns:
-                df_processed['volume_sma'] = ta.volume.volume_sma(df_processed['close'], df_processed['volume'])
+                # Volume SMA (manual calculation since ta.volume.volume_sma doesn't exist)
+                df_processed['volume_sma'] = df_processed['volume'].rolling(window=20).mean()
                 df_processed['volume_ratio'] = df_processed['volume'] / df_processed['volume_sma']
                 
                 # On Balance Volume (OBV)
@@ -139,7 +140,7 @@ class DataProcessor:
             print(f"Error adding technical indicators: {e}")
         
         # Fill NaN values
-        df_processed = df_processed.fillna(method='forward').fillna(method='backward')
+        df_processed = df_processed.fillna(method='ffill').fillna(method='bfill')
         
         return df_processed
     
@@ -249,7 +250,7 @@ class DataProcessor:
         
         # Handle infinite values and NaN
         df_features = df_features.replace([np.inf, -np.inf], np.nan)
-        df_features = df_features.fillna(method='forward').fillna(method='backward')
+        df_features = df_features.fillna(method='ffill').fillna(method='bfill')
         df_features = df_features.fillna(0)
         
         return df_features
