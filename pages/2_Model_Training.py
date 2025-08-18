@@ -54,6 +54,11 @@ def main():
         # Model hyperparameters
         st.subheader("⚙️ Hyperparameters")
         
+        # Initialize default values
+        lstm_units, dropout_rate, epochs, batch_size = 128, 0.2, 50, 32
+        n_estimators, max_depth, min_samples_split = 100, 15, 5
+        C, kernel, gamma = 1.0, "rbf", "scale"
+        
         if model_type == "LSTM":
             lstm_units = st.slider("LSTM Units", 32, 256, 128)
             dropout_rate = st.slider("Dropout Rate", 0.1, 0.5, 0.2)

@@ -8,6 +8,16 @@ This is a comprehensive AI-powered trading platform built with Streamlit that pr
 
 Preferred communication style: Simple, everyday language.
 
+## Recent Changes
+
+**August 18, 2025:**
+- Fixed critical pandas deprecation errors (fillna method='forward' → method='ffill')
+- Fixed ta.volume.volume_sma function (replaced with manual volume moving average)
+- Fixed variable scope issues in Model Training page (n_estimators, lstm_units, etc.)
+- Reduced LSP diagnostic errors from 136 to 108 (28 errors fixed)
+- Binance API credentials securely stored in environment variables
+- All required packages successfully installed and working
+
 ## System Architecture
 
 ### Frontend Architecture
