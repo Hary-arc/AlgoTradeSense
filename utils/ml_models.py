@@ -1,17 +1,33 @@
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.svm import SVR
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import joblib
 import os
+import sys
 from datetime import datetime
+
+# Check if scikit-learn is available
+try:
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.svm import SVR
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+except ImportError:
+    raise ImportError("scikit-learn is required. Install with: pip install scikit-learn")
+
+# Check if TensorFlow is available
+try:
+    import tensorflow as tf
+    from tensorflow.python.keras.models import Sequential, load_model
+    from tensorflow.python.keras.layers import LSTM, Dense, Dropout, BatchNormalization
+    from tensorflow.python.keras.optimizers import Adam
+    from tensorflow.python.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
+    print("Warning: TensorFlow is not available. LSTM models will not work.")
+    print("Install with: pip install tensorflow")
+
 
 class BaseModel:
     """Base class for all ML models"""
@@ -22,38 +38,23 @@ class BaseModel:
         self.is_trained = False
         self.model_type = "base"
         self.training_history = {}
+        self.required_sequence_length = 1  # Default for non-sequence models
     
-    def prepare_data(self, X, y, test_size=0.2, sequence_length=None):
-        """Prepare data for training"""
-        if sequence_length is not None:
-            # For sequence models like LSTM
-            return self._prepare_sequence_data(X, y, sequence_length, test_size)
-        else:
-            # For traditional ML models
-            from sklearn.model_selection import train_test_split
-            return train_test_split(X, y, test_size=test_size, shuffle=False)
+    def prepare_data(self, X, y, test_size=0.2, shuffle=False, random_state=None):
+        """Prepare data for training - simplified version"""
+        return train_test_split(
+            X, y, 
+            test_size=test_size, 
+            shuffle=shuffle, 
+            random_state=random_state
+        )
     
-    def _prepare_sequence_data(self, X, y, sequence_length, test_size):
-        """Prepare sequence data for LSTM models"""
-        sequences_X = []
-        sequences_y = []
-        
-        for i in range(sequence_length, len(X)):
-            sequences_X.append(X[i-sequence_length:i])
-            sequences_y.append(y[i])
-        
-        sequences_X = np.array(sequences_X)
-        sequences_y = np.array(sequences_y)
-        
-        # Split data
-        split_idx = int(len(sequences_X) * (1 - test_size))
-        
-        X_train = sequences_X[:split_idx]
-        X_test = sequences_X[split_idx:]
-        y_train = sequences_y[:split_idx]
-        y_test = sequences_y[split_idx:]
-        
-        return X_train, X_test, y_train, y_test
+    def create_sequences(self, data, sequence_length):
+        """Create sequences from data for time series models"""
+        sequences = []
+        for i in range(sequence_length, len(data)):
+            sequences.append(data[i-sequence_length:i])
+        return np.array(sequences)
     
     def save_model(self, filepath):
         """Save the trained model"""
@@ -66,17 +67,44 @@ class BaseModel:
     def get_feature_importance(self):
         """Get feature importance if available"""
         return None
+    
+    def evaluate(self, X_test, y_test):
+        """Evaluate model performance - common implementation"""
+        if not self.is_trained:
+            raise ValueError("Model must be trained before evaluation")
+        
+        try:
+            predictions = self.predict(X_test)
+            
+            mse = mean_squared_error(y_test, predictions)
+            mae = mean_absolute_error(y_test, predictions)
+            r2 = r2_score(y_test, predictions)
+            
+            return {
+                'mse': mse,
+                'mae': mae,
+                'r2': r2,
+                'rmse': np.sqrt(mse),
+                'predictions': predictions
+            }
+        except Exception as e:
+            return {'error': f"Evaluation failed: {str(e)}"}
+
 
 class LSTMModel(BaseModel):
     """LSTM model for time series prediction"""
     
     def __init__(self, input_shape, units=128, dropout_rate=0.2, learning_rate=0.001):
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError("TensorFlow is required for LSTM models. Install with: pip install tensorflow")
+            
         super().__init__()
         self.input_shape = input_shape
         self.units = units
         self.dropout_rate = dropout_rate
         self.learning_rate = learning_rate
         self.model_type = "LSTM"
+        self.required_sequence_length = input_shape[0]  # For sequence models
         
         self._build_model()
     
@@ -106,19 +134,37 @@ class LSTMModel(BaseModel):
             metrics=['mae']
         )
     
+    def prepare_data(self, X, y, test_size=0.2, shuffle=False, random_state=None):
+        """Prepare sequence data for LSTM"""
+        # Create sequences
+        X_seq = self.create_sequences(X, self.required_sequence_length)
+        y_seq = y[self.required_sequence_length:]
+        
+        # Split data
+        split_idx = int(len(X_seq) * (1 - test_size))
+        
+        X_train = X_seq[:split_idx]
+        X_test = X_seq[split_idx:]
+        y_train = y_seq[:split_idx]
+        y_test = y_seq[split_idx:]
+        
+        return X_train, X_test, y_train, y_test
+    
     def train(self, X_train, y_train, validation_data=None, epochs=50, batch_size=32, verbose=1):
         """Train the LSTM model"""
         callbacks = [
             EarlyStopping(
                 monitor='val_loss' if validation_data else 'loss',
                 patience=10,
-                restore_best_weights=True
+                restore_best_weights=True,
+                verbose=verbose
             ),
             ReduceLROnPlateau(
                 monitor='val_loss' if validation_data else 'loss',
                 factor=0.5,
                 patience=5,
-                min_lr=0.0001
+                min_lr=0.0001,
+                verbose=verbose
             )
         ]
         
@@ -128,7 +174,8 @@ class LSTMModel(BaseModel):
             epochs=epochs,
             batch_size=batch_size,
             callbacks=callbacks,
-            verbose=verbose
+            verbose=verbose,
+            shuffle=False  # Important for time series data
         )
         
         self.is_trained = True
@@ -140,22 +187,7 @@ class LSTMModel(BaseModel):
         if not self.is_trained:
             raise ValueError("Model must be trained before making predictions")
         
-        return self.model.predict(X)
-    
-    def evaluate(self, X_test, y_test):
-        """Evaluate model performance"""
-        predictions = self.predict(X_test)
-        
-        mse = mean_squared_error(y_test, predictions)
-        mae = mean_absolute_error(y_test, predictions)
-        r2 = r2_score(y_test, predictions)
-        
-        return {
-            'mse': mse,
-            'mae': mae,
-            'r2': r2,
-            'rmse': np.sqrt(mse)
-        }
+        return self.model.predict(X, verbose=0).flatten()
     
     def save_model(self, filepath):
         """Save LSTM model"""
@@ -175,7 +207,8 @@ class LSTMModel(BaseModel):
             'units': self.units,
             'dropout_rate': self.dropout_rate,
             'learning_rate': self.learning_rate,
-            'training_history': self.training_history
+            'training_history': self.training_history,
+            'required_sequence_length': self.required_sequence_length
         }
         
         joblib.dump(metadata, f"{filepath}_metadata.pkl")
@@ -183,7 +216,7 @@ class LSTMModel(BaseModel):
     def load_model(self, filepath):
         """Load LSTM model"""
         # Load Keras model
-        self.model = tf.keras.models.load_model(f"{filepath}.h5")
+        self.model = load_model(f"{filepath}.h5")
         
         # Load metadata
         metadata = joblib.load(f"{filepath}_metadata.pkl")
@@ -193,7 +226,9 @@ class LSTMModel(BaseModel):
         self.dropout_rate = metadata['dropout_rate']
         self.learning_rate = metadata['learning_rate']
         self.training_history = metadata.get('training_history', {})
+        self.required_sequence_length = metadata.get('required_sequence_length', self.input_shape[0])
         self.is_trained = True
+
 
 class RandomForestModel(BaseModel):
     """Random Forest model for price prediction"""
@@ -233,21 +268,6 @@ class RandomForestModel(BaseModel):
         
         return self.model.predict(X)
     
-    def evaluate(self, X_test, y_test):
-        """Evaluate model performance"""
-        predictions = self.predict(X_test)
-        
-        mse = mean_squared_error(y_test, predictions)
-        mae = mean_absolute_error(y_test, predictions)
-        r2 = r2_score(y_test, predictions)
-        
-        return {
-            'mse': mse,
-            'mae': mae,
-            'r2': r2,
-            'rmse': np.sqrt(mse)
-        }
-    
     def get_feature_importance(self):
         """Get feature importance"""
         if not self.is_trained:
@@ -286,6 +306,7 @@ class RandomForestModel(BaseModel):
         self.random_state = model_data['random_state']
         self.training_history = model_data.get('training_history', {})
         self.is_trained = True
+
 
 class SVMModel(BaseModel):
     """Support Vector Machine model for price prediction"""
@@ -332,21 +353,6 @@ class SVMModel(BaseModel):
         X_scaled = self.scaler.transform(X)
         return self.model.predict(X_scaled)
     
-    def evaluate(self, X_test, y_test):
-        """Evaluate model performance"""
-        predictions = self.predict(X_test)
-        
-        mse = mean_squared_error(y_test, predictions)
-        mae = mean_absolute_error(y_test, predictions)
-        r2 = r2_score(y_test, predictions)
-        
-        return {
-            'mse': mse,
-            'mae': mae,
-            'r2': r2,
-            'rmse': np.sqrt(mse)
-        }
-    
     def save_model(self, filepath):
         """Save SVM model"""
         if not self.is_trained:
@@ -381,27 +387,65 @@ class SVMModel(BaseModel):
         self.training_history = model_data.get('training_history', {})
         self.is_trained = True
 
+
 def create_model(model_type, **kwargs):
     """Factory function to create ML models"""
-    if model_type.upper() == 'LSTM':
+    model_type = model_type.upper()
+    
+    if model_type == 'LSTM':
         if 'input_shape' not in kwargs:
             raise ValueError("input_shape is required for LSTM model")
         return LSTMModel(**kwargs)
-    elif model_type.upper() == 'RANDOM FOREST':
+    elif model_type == 'RANDOMFOREST' or model_type == 'RANDOM_FOREST':
         return RandomForestModel(**kwargs)
-    elif model_type.upper() == 'SVM':
+    elif model_type == 'SVM':
         return SVMModel(**kwargs)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
+
 
 def evaluate_models(models, X_test, y_test):
     """Compare multiple models on test data"""
     results = {}
     
     for name, model in models.items():
-        if model.is_trained:
-            results[name] = model.evaluate(X_test, y_test)
-        else:
-            results[name] = {'error': 'Model not trained'}
+        try:
+            if model.is_trained:
+                results[name] = model.evaluate(X_test, y_test)
+            else:
+                results[name] = {'error': 'Model not trained'}
+        except Exception as e:
+            results[name] = {'error': f"Evaluation error: {str(e)}"}
     
     return results
+
+
+# Example usage
+if __name__ == "__main__":
+    # Create sample data
+    X = np.random.randn(1000, 10)
+    y = np.random.randn(1000)
+    
+    # Test Random Forest
+    rf_model = RandomForestModel()
+    X_train, X_test, y_train, y_test = rf_model.prepare_data(X, y, test_size=0.2)
+    rf_model.train(X_train, y_train)
+    rf_results = rf_model.evaluate(X_test, y_test)
+    print("Random Forest Results:", rf_results)
+    
+    # Test SVM
+    svm_model = SVMModel()
+    X_train, X_test, y_train, y_test = svm_model.prepare_data(X, y, test_size=0.2)
+    svm_model.train(X_train, y_train)
+    svm_results = svm_model.evaluate(X_test, y_test)
+    print("SVM Results:", svm_results)
+    
+    # Test LSTM if TensorFlow is available
+    if TENSORFLOW_AVAILABLE:
+        # Reshape data for LSTM (samples, timesteps, features)
+        X_reshaped = X.reshape(X.shape[0], 1, X.shape[1])
+        lstm_model = LSTMModel(input_shape=(1, X.shape[1]), units=64)
+        X_train, X_test, y_train, y_test = lstm_model.prepare_data(X_reshaped, y, test_size=0.2)
+        lstm_model.train(X_train, y_train, epochs=10, verbose=0)
+        lstm_results = lstm_model.evaluate(X_test, y_test)
+        print("LSTM Results:", lstm_results)

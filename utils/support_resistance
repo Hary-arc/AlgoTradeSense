@@ -1,0 +1,296 @@
+import numpy as np
+import pandas as pd
+from typing import Dict, List, Tuple, Optional, Union
+from scipy import stats
+from scipy.signal import argrelextrema
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+def detect_support_resistance(self, df: pd.DataFrame, window: int = 20, tolerance: float = 0.015) -> Dict:
+    """Professional support/resistance detection using multiple confluence methods."""
+    try:
+        if len(df) < 100:
+            return self._get_fallback_levels(df)
+        
+        current_price = float(df['close'].iloc[-1])
+        recent_data = df.tail(200)  # Use more data for better accuracy
+        
+        # Method 1: Swing Point Analysis (Most reliable)
+        swing_levels = self._find_swing_points_pro(recent_data, window=window)
+        
+        # Method 2: Recent Highs/Lows
+        recent_levels = self._find_recent_highs_lows(recent_data, window=window)
+        
+        # Method 3: Fibonacci Retracement Levels
+        fib_levels = self._calculate_fibonacci_levels(recent_data)
+        
+        # Method 4: Moving Average Levels
+        ma_levels = self._find_ma_support_resistance(recent_data)
+        
+        # Method 5: Volume Profile Areas
+        volume_levels = self._find_volume_nodes(recent_data)
+        
+        # Method 6: Psychological Levels
+        psych_levels = self._find_psychological_levels(current_price)
+        
+        # Combine all methods with weights
+        all_levels = self._combine_levels_with_weights(
+            swing_levels, recent_levels, fib_levels, ma_levels, volume_levels, psych_levels
+        )
+        
+        # Filter for relevance near current price
+        filtered_levels = self._filter_relevant_levels(all_levels, current_price, max_distance_pct=0.15)
+        
+        # Separate support and resistance
+        support_levels = [level for level, weight in filtered_levels if level < current_price]
+        resistance_levels = [level for level, weight in filtered_levels if level > current_price]
+        
+        # Sort by strength and proximity
+        support_levels.sort(key=lambda x: (-x, abs(x - current_price)))  # Highest support closest first
+        resistance_levels.sort(key=lambda x: (x, abs(x - current_price)))  # Lowest resistance closest first
+        
+        # Calculate overall strength
+        strength = self._calculate_overall_strength(support_levels, resistance_levels, filtered_levels)
+        
+        return {
+            'resistance_levels': [round(level, 4) for level in resistance_levels[:5]],
+            'support_levels': [round(level, 4) for level in support_levels[:5]],
+            'current_price': round(current_price, 4),
+            'strength': strength,
+            'method': 'PRO_MULTI_CONFLUENCE',
+            'details': {
+                'swing_levels': swing_levels,
+                'recent_high_lows': recent_levels,
+                'fibonacci_levels': fib_levels,
+                'moving_averages': ma_levels,
+                'volume_nodes': volume_levels,
+                'psychological_levels': psych_levels
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in professional S/R detection: {e}")
+        return self._get_fallback_levels(df)
+
+def _find_swing_points_pro(self, df: pd.DataFrame, window: int = 5) -> List[float]:
+    """Find significant swing highs and lows with volume confirmation."""
+    highs = df['high'].values
+    lows = df['low'].values
+    volumes = df['volume'].values if 'volume' in df.columns else np.ones(len(highs))
+    
+    swing_points = []
+    
+    # Find swing highs
+    for i in range(window, len(highs) - window):
+        current_high = highs[i]
+        window_highs = highs[i-window:i+window+1]
+        
+        # Check if it's a local maximum with volume confirmation
+        if (current_high == max(window_highs) and 
+            current_high > np.percentile(window_highs, 75) and
+            volumes[i] > np.median(volumes[i-window:i+window+1]) * 0.8):
+            swing_points.append(current_high)
+    
+    # Find swing lows
+    for i in range(window, len(lows) - window):
+        current_low = lows[i]
+        window_lows = lows[i-window:i+window+1]
+        
+        if (current_low == min(window_lows) and 
+            current_low < np.percentile(window_lows, 25) and
+            volumes[i] > np.median(volumes[i-window:i+window+1]) * 0.8):
+            swing_points.append(current_low)
+    
+    return sorted(swing_points)
+
+def _find_recent_highs_lows(self, df: pd.DataFrame, window: int = 20) -> List[float]:
+    """Find recent significant highs and lows."""
+    levels = []
+    
+    # Recent period highs/lows
+    recent_high = df['high'].rolling(window=window).max().dropna().tolist()[-5:]
+    recent_low = df['low'].rolling(window=window).min().dropna().tolist()[-5:]
+    
+    # Longer term levels
+    medium_high = df['high'].rolling(window=window*2).max().dropna().tolist()[-3:]
+    medium_low = df['low'].rolling(window=window*2).min().dropna().tolist()[-3:]
+    
+    levels.extend(recent_high)
+    levels.extend(recent_low)
+    levels.extend(medium_high)
+    levels.extend(medium_low)
+    
+    return sorted(set(levels))
+
+def _calculate_fibonacci_levels(self, df: pd.DataFrame) -> List[float]:
+    """Calculate Fibonacci retracement levels from recent swing."""
+    if len(df) < 50:
+        return []
+    
+    # Find recent significant high and low
+    recent_high = df['high'].max()
+    recent_low = df['low'].min()
+    price_range = recent_high - recent_low
+    
+    if price_range == 0:
+        return []
+    
+    # Standard Fibonacci levels
+    fib_levels = [0.236, 0.382, 0.5, 0.618, 0.786]
+    levels = [recent_high - level * price_range for level in fib_levels]
+    
+    return levels
+
+def _find_ma_support_resistance(self, df: pd.DataFrame) -> List[float]:
+    """Find key moving average levels that act as support/resistance."""
+    closes = df['close']
+    ma_levels = []
+    
+    # Important MA periods used by traders
+    ma_periods = [20, 50, 100, 200]
+    
+    for period in ma_periods:
+        if len(closes) >= period:
+            ma = closes.rolling(window=period).mean().iloc[-1]
+            ma_levels.append(ma)
+    
+    # EMA levels
+    ema_periods = [9, 21, 55]
+    for period in ema_periods:
+        if len(closes) >= period:
+            ema = closes.ewm(span=period).mean().iloc[-1]
+            ma_levels.append(ema)
+    
+    return ma_levels
+
+def _find_volume_nodes(self, df: pd.DataFrame, bins: int = 20) -> List[float]:
+    """Find high volume nodes (price areas with significant trading activity)."""
+    if 'volume' not in df.columns:
+        return []
+    
+    # Use POC (Point of Control) concept from volume profile
+    price_range = df['high'].max() - df['low'].min()
+    bin_size = price_range / bins
+    
+    volume_at_price = {}
+    
+    for idx, row in df.iterrows():
+        price_bin = round(row['low'] / bin_size) * bin_size
+        volume_at_price[price_bin] = volume_at_price.get(price_bin, 0) + row['volume']
+    
+    # Get top volume nodes
+    sorted_nodes = sorted(volume_at_price.items(), key=lambda x: x[1], reverse=True)
+    return [price for price, volume in sorted_nodes[:10]]
+
+def _find_psychological_levels(self, current_price: float) -> List[float]:
+    """Find psychological price levels (round numbers)."""
+    levels = []
+    
+    # Determine appropriate rounding based on price
+    if current_price > 1000:
+        round_base = 50
+    elif current_price > 100:
+        round_base = 5
+    elif current_price > 10:
+        round_base = 1
+    else:
+        round_base = 0.1
+    
+    # Generate round numbers around current price
+    for i in range(-5, 6):
+        level = round(current_price + i * round_base, 2)
+        if abs(level - current_price) / current_price < 0.2:  # Within 20%
+            levels.append(level)
+    
+    return levels
+
+def _combine_levels_with_weights(self, *level_lists) -> List[Tuple[float, float]]:
+    """Combine levels from different methods with confidence weights."""
+    all_levels = {}
+    
+    # Weight different methods (professional trader preferences)
+    method_weights = {
+        'swing': 0.25,       # Most important - actual price reactions
+        'recent': 0.20,      # Recent highs/lows
+        'fib': 0.15,         # Fibonacci levels
+        'ma': 0.15,          # Moving averages
+        'volume': 0.15,      # Volume nodes
+        'psych': 0.10        # Psychological levels
+    }
+    
+    for i, levels in enumerate(level_lists):
+        method_weight = list(method_weights.values())[i]
+        for level in levels:
+            # Merge nearby levels
+            found_nearby = False
+            for existing_level in all_levels:
+                if abs(level - existing_level) / existing_level < 0.01:  # 1% tolerance
+                    all_levels[existing_level] += method_weight
+                    found_nearby = True
+                    break
+            
+            if not found_nearby:
+                all_levels[level] = method_weight
+    
+    return [(level, weight) for level, weight in all_levels.items()]
+
+def _filter_relevant_levels(self, levels: List[Tuple[float, float]], 
+                          current_price: float, max_distance_pct: float = 0.15) -> List[Tuple[float, float]]:
+    """Filter levels that are relevant to current price action."""
+    relevant_levels = []
+    
+    for level, weight in levels:
+        distance_pct = abs(level - current_price) / current_price
+        if distance_pct <= max_distance_pct and weight > 0.1:  # Minimum weight threshold
+            # Adjust weight based on proximity (closer levels get higher weight)
+            proximity_factor = 1 - (distance_pct / max_distance_pct)
+            adjusted_weight = weight * (0.5 + 0.5 * proximity_factor)
+            relevant_levels.append((level, adjusted_weight))
+    
+    # Sort by weight (most important first)
+    relevant_levels.sort(key=lambda x: x[1], reverse=True)
+    return relevant_levels
+
+def _calculate_overall_strength(self, support_levels, resistance_levels, 
+                              weighted_levels) -> str:
+    """Calculate overall strength based on confluence and proximity."""
+    if not weighted_levels:
+        return "WEAK"
+    
+    total_weight = sum(weight for _, weight in weighted_levels)
+    avg_weight = total_weight / len(weighted_levels)
+    
+    if avg_weight > 0.25 and len(weighted_levels) >= 4:
+        return "VERY_STRONG"
+    elif avg_weight > 0.18 and len(weighted_levels) >= 3:
+        return "STRONG"
+    elif avg_weight > 0.12 and len(weighted_levels) >= 2:
+        return "MODERATE"
+    else:
+        return "WEAK"
+
+def _get_fallback_levels(self, df: pd.DataFrame) -> Dict:
+    """Fallback method when primary detection fails."""
+    if len(df) == 0:
+        return {
+            'resistance_levels': [],
+            'support_levels': [],
+            'current_price': 0,
+            'strength': 'NO_DATA',
+            'method': 'FALLBACK'
+        }
+    
+    current_price = float(df['close'].iloc[-1])
+    
+    # Simple recent highs/lows as fallback
+    recent_high = df['high'].rolling(20).max().iloc[-1] if len(df) >= 20 else current_price * 1.05
+    recent_low = df['low'].rolling(20).min().iloc[-1] if len(df) >= 20 else current_price * 0.95
+    
+    return {
+        'resistance_levels': [round(recent_high, 4)],
+        'support_levels': [round(recent_low, 4)],
+        'current_price': round(current_price, 4),
+        'strength': 'WEAK',
+        'method': 'FALLBACK'
+    }

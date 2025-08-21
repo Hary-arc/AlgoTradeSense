@@ -29,7 +29,8 @@ st.set_page_config(
 
 # Initialize database on startup
 init_database()
-
+from utils.database import DatabaseManager
+db = DatabaseManager() 
 # Initialize Binance client
 @st.cache_resource
 def get_binance_client():
