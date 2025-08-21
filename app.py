@@ -3,6 +3,19 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import os
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not available, environment variables should be set manually
+    pass
+
+# Set TensorFlow environment variables to reduce warnings
+os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+
 from utils.database import init_database
 from utils.binance_client import BinanceClient
 

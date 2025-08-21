@@ -239,8 +239,9 @@ def main():
                     status_text.text("Analyzing results...")
                     
                     if results:
-                        # Store results in session state
+                        # Store results and data in session state
                         st.session_state.backtest_results = results
+                        st.session_state.backtest_data = df
                         
                         progress_bar.progress(100)
                         status_text.text("Backtest completed!")
@@ -508,14 +509,18 @@ def main():
             st.subheader("📊 Performance Comparison")
             
             # Compare with buy and hold
-            buy_hold_return = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
+            if 'backtest_data' in st.session_state:
+                df = st.session_state.backtest_data
+                buy_hold_return = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
+            else:
+                buy_hold_return = 0  # Fallback if no data available
             
             comparison_data = {
                 'Strategy': ['ML Trading', 'Buy & Hold'],
                 'Total Return': [f"{total_return:.2%}", f"{buy_hold_return:.2%}"],
                 'Annualized Return': [f"{annualized_return:.2%}", f"{(1 + buy_hold_return) ** (365 / backtest_days) - 1:.2%}"],
                 'Max Drawdown': [f"{max_drawdown:.2%}", "N/A"],
-                'Number of Trades': [len(trades), "1"]
+                'Number of Trades': [str(len(trades)), "1"]
             }
             
             comparison_df = pd.DataFrame(comparison_data)
@@ -524,16 +529,21 @@ def main():
             # Strategy vs benchmark chart
             fig = go.Figure()
             
-            # Normalize prices to start from same value
-            normalized_prices = df['close'].values / df['close'].values[0] * initial_capital
-            
+            # Create portfolio dates first
             portfolio_dates = pd.date_range(
                 start=pd.to_datetime(start_date),
                 periods=len(results['portfolio_values']),
                 freq='H' if model_info['interval'] == '1h' else 'D'
             )
             
-            benchmark_dates = df.index[:len(portfolio_dates)]
+            # Normalize prices to start from same value
+            if 'backtest_data' in st.session_state:
+                df = st.session_state.backtest_data
+                normalized_prices = df['close'].values / df['close'].values[0] * initial_capital
+                benchmark_dates = df.index[:len(portfolio_dates)]
+            else:
+                normalized_prices = [initial_capital] * len(portfolio_dates)
+                benchmark_dates = portfolio_dates
             
             fig.add_trace(go.Scatter(
                 x=portfolio_dates,
